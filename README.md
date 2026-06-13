@@ -1,6 +1,6 @@
-# Surveillance System v2.0 - C++ High Performance
+# Surveillance Drone v1.0
 
-A professional-grade, bare-metal optimized surveillance system for Raspberry Pi using C++17, V4L2, and OpenCV.
+A personal/educational use, bare-metal optimized surveillance system for Raspberry Pi using C++17, V4L2, and OpenCV.
 
 ## Features
 
