@@ -111,6 +111,7 @@ surveillance/
 ├── install.sh          # Automated installer
 └── README.md           # This file
 ```
+---
 
 # License
 
