@@ -68,8 +68,8 @@ http://raspberry-pi-ip:8080
 ```
 ┌─────────────────────────────────────────┐
 │  CAPTURE THREAD (V4L2 DMA)              │
-│  ├─ Zero-copy mmap buffers               │
-│  └─ YUYV/MJPEG → OpenCV Mat              │
+│  ├─ Zero-copy mmap buffers              │
+│  └─ YUYV/MJPEG → OpenCV Mat             │
 └─────────────────┬───────────────────────┘
                   │
 ┌─────────────────▼───────────────────────┐
