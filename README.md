@@ -1,117 +1,75 @@
-# Home Surveillance System v1.0
+# Home Surveillance System v2.0
 
-A personal/educational use, bare-metal optimized home surveillance system for Raspberry Pi using C++17, V4L2, and OpenCV.
+A Raspberry Pi home-surveillance application written in C++17. It captures a V4L2 camera, detects motion with OpenCV MOG2, records MP4 files, controls GPIO peripherals, and serves an MJPEG stream.
 
-## Features
+## What it does
 
-- **V4L2 DMA Capture**: Zero-copy kernel buffers for minimal CPU overhead
-- **Hardware H.264 Encoding**: GPU-accelerated video compression
-- **Advanced Motion Detection**: MOG2 background subtraction with contour analysis
-- **Dual Detection**: PIR sensor + Computer vision for reliability
-- **Auto Night Vision**: IR LED control based on scene brightness
-- **MJPEG Streaming**: Multi-client HTTP server (access from any browser)
-- **Thread-safe Logging**: Lock-free ring buffer logger
-- **Telegram/Email Alerts**: Instant notifications on motion
-- **Auto-cleanup**: Age-based recording deletion
-- **Systemd Service**: Auto-start on boot
+- Captures YUYV or MJPEG frames from `/dev/video0` through V4L2 mmap buffers.
+- Detects motion with background subtraction and contour filtering.
+- Starts a 15-second MP4 recording after a vision motion event.
+- Switches an IR LED based on image brightness; supports PIR input, buzzer, and status LED.
+- Serves the current frame at `http://<pi-ip>:8080` as MJPEG.
+- Deletes recordings older than 30 days.
 
-## Hardware Requirements
+## Important limitations
 
-| Component | Specification |
-|-----------|--------------|
-| Raspberry Pi | 3B+/4/5 (4GB RAM recommended) |
-| Camera | Pi Camera Module v2/v3 or USB camera |
-| PIR Sensor | HC-SR501 or AM312 |
-| IR LED Array | 940nm, 48-LED (optional) |
-| Power Supply | 5V 3A USB-C |
-| Storage | 32GB+ MicroSD or USB drive |
+- The stream has no authentication or encryption. Restrict it to a trusted LAN or place it behind an authenticated reverse proxy.
+- The requested codec is `mp4v`; hardware H.264 encoding is not implemented.
+- Telegram and email delivery are not implemented. Alerts currently trigger the local buzzer and are written to the log.
+- This project requires a camera exposed as `/dev/video0`. Modern Raspberry Pi camera setups may require a V4L2-compatible camera configuration.
 
-## GPIO Pinout
+## Hardware and GPIO
 
-| Function | BCM Pin | Physical Pin |
-|----------|---------|--------------|
-| PIR VCC | - | Pin 2 (5V) |
-| PIR GND | - | Pin 6 (GND) |
-| PIR OUT | GPIO 17 | Pin 11 |
-| IR LED | GPIO 18 | Pin 12 |
-| Buzzer | GPIO 27 | Pin 13 |
-| Status LED | GPIO 22 | Pin 15 |
+| Function | BCM GPIO |
+| --- | --- |
+| PIR input | 17 |
+| IR LED | 18 |
+| Buzzer | 27 |
+| Status LED | 22 |
 
-## Quick Install
+## Install on Raspberry Pi OS
+
+Clone or copy this repository to the Pi, then run from the repository root:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/yourrepo/install.sh | bash
+chmod +x install.sh
+./install.sh
 ```
 
-Or manually:
+The installer installs dependencies, builds the program, creates recording/log directories, installs the binary at `/usr/local/bin/surveillance`, and enables `surveillance.service`.
+
+The service runs as the user who invoked `sudo` (`$SUDO_USER`) and adds that user to the `video` and `gpio` groups for the service. Ensure the camera is usable by that user before enabling the service.
+
+## Manual build
 
 ```bash
 sudo apt update
-sudo apt install build-essential cmake libopencv-dev libgpiod-dev libv4l-dev
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
-sudo make install
-sudo systemctl enable surveillance
-sudo systemctl start surveillance
+sudo apt install build-essential cmake pkg-config libopencv-dev libgpiod-dev libv4l-dev
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+sudo cmake --install build --prefix /usr/local
 ```
 
-## Access Stream
+Before running manually, create writable storage directories:
 
-Open any browser and navigate to:
-```
-http://raspberry-pi-ip:8080
+```bash
+sudo install -d -o "$USER" -g "$USER" /var/lib/surveillance/recordings /var/log/surveillance
+/usr/local/bin/surveillance
 ```
 
-## Architecture
+## Configuration
 
-```
-┌─────────────────────────────────────────┐
-│  CAPTURE THREAD (V4L2 DMA)              │
-│  ├─ Zero-copy mmap buffers              │
-│  └─ YUYV/MJPEG → OpenCV Mat             │
-└─────────────────┬───────────────────────┘
-                  │
-┌─────────────────▼───────────────────────┐
-│  PROCESSING THREAD                      │
-│  ├─ Night vision auto-adjust            │
-│  ├─ MOG2 motion detection               │
-│  ├─ Contour analysis & bounding boxes   │
-│  └─ Frame pool management               │
-└─────────────────┬───────────────────────┘
-                  │
-    ┌─────────────┼─────────────┐
-    │             │             │
-┌───▼───┐   ┌────▼────┐  ┌────▼────┐
-│STREAM │   │ RECORD  │  │  ALERT  │
-│THREAD │   │ THREAD  │  │ THREAD  │
-│MJPEG  │   │ H.264   │  │ GPIO/   │
-│HTTP   │   │ OpenCV  │  │ Telegram│
-└───────┘   └─────────┘  └─────────┘
-```
-## Block Diagram 
----
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/4c406b05-9b1c-483d-b3ea-57be97cfc909" />
+Configuration constants, including camera path, dimensions, recording location, stream port, GPIO pins, and motion sensitivity, are in `surveillance.hpp`.
 
----
-## File Structure
+## Source layout
 
-```
-surveillance/
-├── surveillance.hpp    # Main header with all classes
-├── main.cpp            # Entry point and system orchestration
-├── logger.cpp          # Thread-safe async logger
-├── gpio.cpp            # libgpiod hardware control
-├── camera.cpp          # V4L2 capture with DMA
-├── motion.cpp          # Background subtraction detector
-├── recorder.cpp        # Video recording with timestamp overlay
-├── stream.cpp          # HTTP MJPEG server
-├── alert.cpp           # Notification manager
-├── CMakeLists.txt      # Build configuration
-├── install.sh          # Automated installer
-└── README.md           # This file
-```
----
+- `main.cpp` — system startup, processing loop, and shutdown.
+- `camera.cpp` — V4L2 capture and mmap buffer management.
+- `motion.cpp` — OpenCV motion detection.
+- `recorder.cpp` — MP4 recording and retention cleanup.
+- `stream.cpp` — MJPEG HTTP server.
+- `gpio.cpp` — libgpiod input/output.
+- `alert.cpp` — queued local alerts.
 
 # License
 
