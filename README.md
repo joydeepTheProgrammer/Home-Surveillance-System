@@ -18,9 +18,7 @@
 
 ## 📸 Circuit Schematic
 
-![GPIO and Peripheral Schematic](hardware/home-surveillance-schematic.png)
-
-> **BCM Pin Reference:** PIR_PIN · 17 &nbsp;|&nbsp; IR_LED_PIN · 18 &nbsp;|&nbsp; BUZZER_PIN · 27 &nbsp;|&nbsp; STATUS_LED_PIN · 22
+<img width="1024" height="1024" alt="circuit-diagram" src="https://github.com/user-attachments/assets/a3dc3103-f4fc-4af4-a93a-2e60c071d1dc" />
 
 ---
 
