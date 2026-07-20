@@ -283,17 +283,7 @@ Pull requests are welcome! Please:
 
 ---
 
-## 📄 License
-
-Unless otherwise specified, all content in this repository—including, but not
-limited to, software source code, firmware, hardware design files (schematics,
-PCB layouts, Gerber files, BOMs, CAD files), documentation, configuration
-files, examples, and supporting materials—is made available under the MIT
-License.
-
----
-
-## MIT License
+## 📄 MIT License
 
 Copyright (c) 2026 Joydeep Majumdar
 
