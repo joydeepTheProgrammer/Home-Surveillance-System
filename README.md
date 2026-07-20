@@ -231,7 +231,7 @@ The service runs as the invoking `$SUDO_USER` and automatically adds that user t
 │  └─────────────┘  └────────────┘  └──────────────────┘  │
 │                                                         │
 │  ┌──────────────────────────────────────────────────┐   │
-│  │  Logger  — async bounded queue, background writer │  │
+│  │  Logger  — async bounded queue, background writer│  │
 │  └──────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
