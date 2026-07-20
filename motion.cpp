@@ -1,6 +1,6 @@
 #include "surveillance.hpp"
 
-MotionDetector::MotionDetector(SystemStatus* s, Logger* l) 
+MotionDetector::MotionDetector(SystemStatus* s, Logger* l)
     : status(s), logger(l) {
 
     bg_subtractor = cv::createBackgroundSubtractorMOG2(
@@ -14,6 +14,8 @@ MotionDetector::MotionDetector(SystemStatus* s, Logger* l)
 
 bool MotionDetector::detect(FrameBuffer* fb) {
     if (fb->frame.empty()) return false;
+
+    fb->has_motion = false;
 
     cv::Mat fg_mask;
     bg_subtractor->apply(fb->frame, fg_mask);

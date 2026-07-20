@@ -13,34 +13,35 @@ Logger::~Logger() {
 }
 
 void Logger::log(const std::string& level, const std::string& msg) {
-    auto now = std::chrono::system_clock::now();
-    auto time = std::chrono::system_clock::to_time_t(now);
+    const auto now = std::chrono::system_clock::now();
+    const auto time = std::chrono::system_clock::to_time_t(now);
+    std::tm local_time{};
+    localtime_r(&time, &local_time);
 
     std::stringstream ss;
-    ss << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
+    ss << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S");
     ss << " [" << level << "] " << msg;
 
     std::lock_guard<std::mutex> lock(mtx);
+    if (buffer.size() >= config::LOG_BUFFER_SIZE) buffer.pop();
     buffer.push(ss.str());
     cv.notify_one();
 }
 
 void Logger::writerLoop() {
-    while (running || !buffer.empty()) {
-        std::unique_lock<std::mutex> lock(mtx);
-        cv.wait(lock, [this] { return !buffer.empty() || !running; });
-
-        while (!buffer.empty()) {
-            auto msg = buffer.front();
+    for (;;) {
+        std::string message;
+        {
+            std::unique_lock<std::mutex> lock(mtx);
+            cv.wait(lock, [this] { return !buffer.empty() || !running; });
+            if (!running && buffer.empty()) break;
+            message = std::move(buffer.front());
             buffer.pop();
-            lock.unlock();
-
-            std::cout << msg << std::endl;
-            if (log_file.is_open()) {
-                log_file << msg << std::endl;
-                log_file.flush();
-            }
-            lock.lock();
+        }
+        std::cout << message << std::endl;
+        if (log_file.is_open()) {
+            log_file << message << std::endl;
+            log_file.flush();
         }
     }
 }

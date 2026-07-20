@@ -1,6 +1,10 @@
 #include "surveillance.hpp"
 
-SurveillanceSystem::SurveillanceSystem() {}
+namespace {
+volatile std::sig_atomic_t g_stop_requested = 0;
+}
+
+SurveillanceSystem::SurveillanceSystem() = default;
 
 SurveillanceSystem::~SurveillanceSystem() {
     stop();
@@ -8,15 +12,10 @@ SurveillanceSystem::~SurveillanceSystem() {
 
 bool SurveillanceSystem::init() {
     status.running = true;
-
-    logger = new Logger("/home/pi/surveillance/logs/system.log");
+    logger = new Logger(config::LOG_FILE);
     logger->info("=== Surveillance System Starting ===");
 
     buffer_pool = new FrameBuffer[config::BUFFER_POOL_SIZE];
-    for (int i = 0; i < config::BUFFER_POOL_SIZE; i++) {
-        buffer_pool[i].in_use = false;
-    }
-
     gpio = new GPIOManager(&status, logger);
     if (!gpio->init()) {
         logger->error("GPIO init failed");
@@ -29,30 +28,20 @@ bool SurveillanceSystem::init() {
     streamer = new StreamServer(config::STREAM_PORT, &status, logger);
     alerter = new AlertManager(gpio, logger);
 
-    if (!camera->start()) {
-        logger->error("Camera init failed");
-        return false;
-    }
-
-    if (!streamer->start()) {
-        logger->error("Stream server init failed");
+    if (!camera->start() || !streamer->start()) {
+        logger->error("Camera or stream server initialization failed");
         return false;
     }
 
     gpio->start();
     alerter->start();
-
     processing_thread = std::thread(&SurveillanceSystem::processingLoop, this);
-    recording_thread = std::thread(&SurveillanceSystem::recordingLoop, this);
-
     logger->info("System initialized successfully");
-    logger->info("Stream available at: http://<pi-ip>:" + std::to_string(config::STREAM_PORT));
-
     return true;
 }
 
 void SurveillanceSystem::processingLoop() {
-    while (status.running) {
+    while (status.running.load()) {
         FrameBuffer* fb = camera->acquireFrame();
         if (!fb) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -61,16 +50,12 @@ void SurveillanceSystem::processingLoop() {
 
         if (fb->brightness < config::NIGHT_THRESHOLD && !status.night_mode.load()) {
             gpio->setIR(true);
-        } else if (fb->brightness > config::NIGHT_THRESHOLD + config::NIGHT_HYSTERESIS 
-                   && status.night_mode.load()) {
+        } else if (fb->brightness > config::NIGHT_THRESHOLD + config::NIGHT_HYSTERESIS && status.night_mode.load()) {
             gpio->setIR(false);
         }
 
-        bool motion = detector->detect(fb);
-
-        if (motion) {
+        if (detector->detect(fb)) {
             alerter->trigger("MOTION", "Frame " + std::to_string(fb->frame_number));
-
             if (!recorder->isRecording()) {
                 recorder->startRecording(fb->frame.size(), config::CAM_FPS);
             }
@@ -80,14 +65,20 @@ void SurveillanceSystem::processingLoop() {
             detector->drawRegions(fb->frame, fb->motion_regions);
         }
 
-        streamer->updateFrame(fb);
+        streamer->updateFrame(fb->frame);
+        if (recorder->isRecording()) {
+            recorder->writeFrame(fb->frame);
+            if (recorder->shouldStop()) {
+                recorder->stopRecording();
+                recorder->cleanupOldRecordings();
+            }
+        }
 
         static auto last_fps_time = std::chrono::steady_clock::now();
         static int frame_count = 0;
-        frame_count++;
-
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_fps_time).count();
+        ++frame_count;
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_fps_time).count();
         if (elapsed >= 1) {
             status.fps = frame_count / elapsed;
             frame_count = 0;
@@ -98,81 +89,50 @@ void SurveillanceSystem::processingLoop() {
     }
 }
 
-void SurveillanceSystem::recordingLoop() {
-    while (status.running) {
-        FrameBuffer* fb = nullptr;
-        for (int i = 0; i < config::BUFFER_POOL_SIZE; i++) {
-            if (buffer_pool[i].in_use.load() && buffer_pool[i].has_motion.load()) {
-                fb = &buffer_pool[i];
-                break;
-            }
-        }
-
-        if (fb && recorder->isRecording()) {
-            recorder->writeFrame(fb->frame);
-        }
-
-        if (recorder->shouldStop()) {
-            recorder->stopRecording();
-            recorder->cleanupOldRecordings();
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(33));
-    }
-}
-
 void SurveillanceSystem::start() {
     if (!init()) {
         std::cerr << "Failed to initialize system" << std::endl;
+        stop();
         return;
     }
 
-    while (status.running) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+    while (status.running.load() && !g_stop_requested) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
+    stop();
 }
 
 void SurveillanceSystem::stop() {
+    if (stopped.exchange(true)) return;
     status.running = false;
 
     if (processing_thread.joinable()) processing_thread.join();
-    if (recording_thread.joinable()) recording_thread.join();
-
     if (recorder) recorder->stopRecording();
     if (alerter) alerter->stop();
-    if (gpio) gpio->stop();
     if (streamer) streamer->stop();
     if (camera) camera->stop();
+    if (gpio) gpio->stop();
 
-    delete[] buffer_pool;
-    delete logger;
-    delete gpio;
-    delete camera;
-    delete detector;
-    delete recorder;
-    delete streamer;
-    delete alerter;
+    delete alerter; alerter = nullptr;
+    delete streamer; streamer = nullptr;
+    delete recorder; recorder = nullptr;
+    delete detector; detector = nullptr;
+    delete camera; camera = nullptr;
+    delete gpio; gpio = nullptr;
+    delete[] buffer_pool; buffer_pool = nullptr;
+    delete logger; logger = nullptr;
 }
 
-SurveillanceSystem* g_system = nullptr;
-
-void signal_handler(int sig) {
-    std::cout << "
-Received signal " << sig << ", shutting down..." << std::endl;
-    if (g_system) g_system->stop();
+void signal_handler(int) {
+    g_stop_requested = 1;
 }
 
-int main(int argc, char** argv) {
-    std::cout << "Home Surveillance System v2.0 (C++ High Performance)" << std::endl;
-    std::cout << "=====================================================" << std::endl;
-
+int main() {
+    std::cout << "Home Surveillance System v2.0" << std::endl;
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    SurveillanceSystem sys;
-    g_system = &sys;
-
-    sys.start();
-
+    SurveillanceSystem system;
+    system.start();
     return 0;
 }

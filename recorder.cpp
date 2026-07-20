@@ -1,11 +1,11 @@
 #include "surveillance.hpp"
 #include <dirent.h>
+#include <filesystem>
 
 VideoRecorder::VideoRecorder(SystemStatus* s, Logger* l) : status(s), logger(l) {
-    struct stat st;
-    if (stat(config::RECORD_DIR, &st) != 0) {
-        mkdir(config::RECORD_DIR, 0755);
-    }
+    std::error_code error;
+    std::filesystem::create_directories(config::RECORD_DIR, error);
+    if (error) logger->error("Unable to create recording directory: " + error.message());
 }
 
 std::string VideoRecorder::generateFilename() {
@@ -14,7 +14,9 @@ std::string VideoRecorder::generateFilename() {
 
     std::stringstream ss;
     ss << config::RECORD_DIR << "/motion_";
-    ss << std::put_time(std::localtime(&time), "%Y%m%d_%H%M%S");
+    std::tm local_time{};
+    localtime_r(&time, &local_time);
+    ss << std::put_time(&local_time, "%Y%m%d_%H%M%S");
     ss << config::VIDEO_EXT;
 
     return ss.str();
@@ -57,7 +59,9 @@ void VideoRecorder::writeFrame(const cv::Mat& frame) {
         auto now = std::chrono::system_clock::now();
         auto time = std::chrono::system_clock::to_time_t(now);
         std::stringstream ts;
-        ts << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
+        std::tm local_time{};
+        localtime_r(&time, &local_time);
+        ts << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S");
 
         cv::putText(annotated, ts.str(), cv::Point(10, 30),
                    cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255, 255, 255), 2);

@@ -14,11 +14,14 @@
 #include <sstream>
 #include <iomanip>
 #include <ctime>
+#include <cstdint>
 #include <cstring>
+#include <cerrno>
 #include <csignal>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/select.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <linux/videodev2.h>
@@ -51,7 +54,8 @@ namespace config {
     constexpr int RECORD_DURATION_SEC = 15;
 
     // Recording
-    constexpr const char* RECORD_DIR = "/home/pi/surveillance/recordings";
+    constexpr const char* RECORD_DIR = "/var/lib/surveillance/recordings";
+    constexpr const char* LOG_FILE = "/var/log/surveillance/system.log";
     constexpr int MAX_RECORD_AGE_DAYS = 30;
     constexpr const char* VIDEO_CODEC = "mp4v";
     constexpr const char* VIDEO_EXT = ".mp4";
@@ -85,6 +89,7 @@ struct FrameBuffer {
     cv::Mat frame;
     std::chrono::steady_clock::time_point timestamp;
     std::atomic<bool> in_use{false};
+    std::atomic<bool> ready{false};
     std::atomic<bool> has_motion{false};
     std::vector<cv::Rect> motion_regions;
     double brightness = 0.0;
@@ -106,7 +111,7 @@ struct SystemStatus {
 };
 
 // ============================================================================
-// LOGGER (Thread-safe ring buffer)
+// LOGGER (Thread-safe bounded asynchronous queue)
 // ============================================================================
 
 class Logger {
@@ -144,6 +149,7 @@ private:
     struct gpiod_line* status_line = nullptr;
     std::thread monitor_thread;
     std::atomic<bool> running{false};
+    std::mutex line_mutex;
     SystemStatus* status = nullptr;
     Logger* logger = nullptr;
 
@@ -165,7 +171,7 @@ public:
 };
 
 // ============================================================================
-// V4L2 CAMERA CAPTURE (Zero-copy DMA)
+// V4L2 CAMERA CAPTURE (mmap kernel buffers)
 // ============================================================================
 
 class V4L2Camera {
@@ -188,8 +194,6 @@ private:
 
     FrameBuffer* pool = nullptr;
     int pool_size = 0;
-    std::atomic<int> write_idx{0};
-    std::atomic<int> read_idx{0};
 
     bool initDevice();
     bool initBuffers();
@@ -229,7 +233,7 @@ public:
 };
 
 // ============================================================================
-// VIDEO RECORDER (H.264 hardware encoding via OpenCV)
+// VIDEO RECORDER (OpenCV VideoWriter)
 // ============================================================================
 
 class VideoRecorder {
@@ -268,12 +272,14 @@ private:
     SystemStatus* status = nullptr;
     Logger* logger = nullptr;
 
-    FrameBuffer* current_frame = nullptr;
+    cv::Mat current_frame;
     std::mutex frame_mutex;
+    std::atomic<int> active_clients{0};
 
     void serverLoop();
     void handleClient(int client_fd);
     bool sendMJPEG(int client_fd, const cv::Mat& frame);
+    bool sendAll(int client_fd, const void* data, size_t length);
 
 public:
     StreamServer(int p, SystemStatus* s, Logger* l);
@@ -281,7 +287,7 @@ public:
 
     bool start();
     void stop();
-    void updateFrame(FrameBuffer* fb);
+    void updateFrame(const cv::Mat& frame);
 };
 
 // ============================================================================
@@ -328,11 +334,9 @@ private:
     FrameBuffer* buffer_pool = nullptr;
 
     std::thread processing_thread;
-    std::thread recording_thread;
-    std::atomic<bool> running{false};
+    std::atomic<bool> stopped{false};
 
     void processingLoop();
-    void recordingLoop();
 
 public:
     SurveillanceSystem();

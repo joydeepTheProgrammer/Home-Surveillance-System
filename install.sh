@@ -1,62 +1,35 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "=========================================="
-echo "  Surveillance System C++ Installer"
-echo "=========================================="
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="$SOURCE_DIR/build"
+SERVICE_USER="${SUDO_USER:-$USER}"
 
-# Update system
-sudo apt update && sudo apt upgrade -y
+sudo apt update
+sudo apt install -y build-essential cmake pkg-config libopencv-dev libgpiod-dev libv4l-dev v4l-utils
 
-# Install dependencies
-sudo apt install -y \
-    build-essential \
-    cmake \
-    libopencv-dev \
-    libgpiod-dev \
-    libv4l-dev \
-    v4l-utils \
-    git
+cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+cmake --build "$BUILD_DIR" --parallel "$(nproc)"
+sudo cmake --install "$BUILD_DIR" --prefix /usr/local
 
-# Create directories
-mkdir -p /home/pi/surveillance/{recordings,logs,build}
-
-# Build
-cd /home/pi/surveillance/build
-cmake ..
-make -j$(nproc)
-
-# Install binary
-sudo make install
-
-# Create systemd service
-sudo tee /etc/systemd/system/surveillance.service > /dev/null <<EOF
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/surveillance/recordings /var/log/surveillance
+sudo tee /etc/systemd/system/surveillance.service >/dev/null <<EOF
 [Unit]
-Description=High Performance Surveillance System
+Description=Home Surveillance System
 After=network.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/surveillance
+User=$SERVICE_USER
+SupplementaryGroups=video gpio
 ExecStart=/usr/local/bin/surveillance
-Restart=always
+Restart=on-failure
 RestartSec=5
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable surveillance.service
-sudo systemctl start surveillance.service
-
-echo "=========================================="
-echo "  Installation Complete!"
-echo "=========================================="
-echo "Stream: http://$(hostname -I | awk '{print $1}'):8080"
-echo "Logs:   sudo journalctl -u surveillance -f"
-echo "Config: Edit /home/pi/surveillance/config.hpp"
-echo "=========================================="
+sudo systemctl enable --now surveillance.service
+echo "Stream: http://<raspberry-pi-ip>:8080"
